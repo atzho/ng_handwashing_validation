@@ -25,30 +25,27 @@ def process_mp4(files, output, step=15):
 
         counter = 0
         while cap.isOpened():
-            try:
-                # read only every nth frame
-                if counter % step != 0:
-                    break
-                counter+=1
-                
-                # Try to read frame from video capture
-                success, frame = cap.read()
-                if not success:
-                    print('Failed to read %s' % filepath)
-                    break
-
-                # process frame
-                frame = cv2.resize(frame, (540, 380), fx = 0, fy = 0,
-                                   interpolation = cv2.INTER_CUBIC)
-                frame = cv2.cvtColor(cv2.flip(frame, 1), cv2.COLOR_BGR2RGB)
-                frame.flags.writeable = False
-                results = hands.process(frame)
-
-                # add frame data to video data
-                video_results['output'].append(landmark_list_to_array(results.multi_hand_landmarks[0]))
-            except:
-                print('Failed to read frame')
-                video_results['output'].append([])
+            # read only every nth frame
+            if counter % step == 0:
+                try:                    
+                    # Try to read frame from video capture
+                    success, frame = cap.read()
+                    if not success:
+                        break
+    
+                    # process frame
+                    frame = cv2.resize(frame, (540, 380), fx = 0, fy = 0,
+                                       interpolation = cv2.INTER_CUBIC)
+                    frame = cv2.cvtColor(cv2.flip(frame, 1), cv2.COLOR_BGR2RGB)
+                    frame.flags.writeable = False
+                    results = hands.process(frame)
+    
+                    # add frame data to video data
+                    video_results['output'].append(landmark_list_to_array(results.multi_hand_landmarks[0]))
+                except:
+                    print('Failed to read frame')
+                    video_results['output'].append([])
+            counter += 1
 
         if len(video_results['output']) > 0:
             json.dump(video_results, output_file)
