@@ -18,6 +18,8 @@ def process_mp4(files, output, step=15):
 
     output_file = open(output, 'a')
 
+    data = []
+
     for filepath in files:
         cap = cv2.VideoCapture(filepath)
         
@@ -48,11 +50,14 @@ def process_mp4(files, output, step=15):
             counter += 1
 
         if len(video_results['output']) > 0:
-            json.dump(video_results, output_file)
+            data.append(video_results)
             if not warnings_only:
                 print('Successfully processed and saved %s' % filepath)
         else:
             print('No frames processed for %s' % filepath)
+
+    # only writes at end; if batch fails have to restart anyways :)
+    json.dump(data, output_file)
 
 def get_file_list(path):
     file_list = []
@@ -60,4 +65,4 @@ def get_file_list(path):
         file_list += [(root + '/' + file) for file in files]
     return file_list
 
-process_mp4(get_file_list('data/HandWashDataset'), 'preprocessed_data.json')
+process_mp4(get_file_list('data/HandWashDataset'), 'preprocessed_negatives.json')
