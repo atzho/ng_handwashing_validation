@@ -1,13 +1,83 @@
-import sys, numpy, pickle, torch, itertools, time, math
+import sys, pickle, torch, itertools, time, math
+import numpy as np
+import json
+from torch.utils.data import DataLoader
+from torch.utils.data import Dataset
+
+class HandWashDataset(Dataset):
+    # time_window_len = time (in seconds) that the RNN remembers
+    def __init__(self, mediapipe_pos_file, mediapipe_neg_file, time_window_len, transform=None, target_transform=None):
+        with open(mediapipe_pos_file) as f:
+            self.mediapipe_pos_data = json.load(f)
+            #for video_arr in self.mediapipe_pos_data:
+            #    video_arr['label'] = 1
+        with open(mediapipe_neg_file) as f:
+            self.mediapipe_neg_data = json.load(f)
+            #for video_arr in self.mediapipe_neg_data:
+            #    video_arr['label'] = 0
+        self.transform = transform
+        self.target_transform = target_transform
+
+        self.time_window_len = time_window_len
+        self.frame_window_len = 2 * self.time_window_len
+
+        count = 0
+        data = []
+        labels = []
+        #print(self.mediapipe_pos_data[0]['output'][0:6]) #debugging
+        # cut positive training data into frames
+        for video in self.mediapipe_pos_data:
+            window_count = len(video['output']) - self.frame_window_len + 1
+            if window_count > 0: #if contains enough frames
+                for i in range(window_count):
+                    data.append(np.array(video['output'][i:(i + self.frame_window_len)]))
+                    #labels.append(video['label'])
+                    labels.append(1)
+                    count += 1
+        
+        # cut negative training data into frames
+        for video in self.mediapipe_neg_data:
+            window_count = len(video['output']) - self.frame_window_len + 1
+            if window_count > 0: #if contains enough frames
+                for i in range(window_count):
+                    data.append(np.array(video['output'][i:(i + self.frame_window_len)]))
+                    #labels.append(video['label'])
+                    labels.append(0)
+                    count += 1
+        
+        #print("Data shape:")
+        #print(np.array(data[0]))
+        self.data = np.stack(data, axis=0)
+        self.labels = np.array(labels)
+        self.len = count
+
+    def __len__(self):
+        return self.len
+
+    def __getitem__(self, idx):
+        #print("Running get item")
+        #print(self.data.shape)
+        video_seq = self.data[idx, :, :, :]
+        #print("Video seq. shape:")
+        #print(video_seq.shape)
+        video_label = self.labels[idx]
+        if self.transform:
+            image = self.transform(image)
+        if self.target_transform:
+            label = self.target_transform(label)
+        #sample = {"MediaPipe Data": video_seq, "Label": video_label}
+        sample = (video_seq, video_label)
+        #print(sample)
+        return sample
 
 class HandWashNet(torch.nn.Module):
 
-    def __init__(self, input_size=42, hidden_size=10, n_layers=2, dropout_probability=0.2):
+    def __init__(self, input_size=32, hidden_size=10, rnn_layers=2, dropout_probability=0.2):
         #Initialization
         super(HandWashNet, self).__init__()
         self.input_size = input_size
         self.hidden_size = hidden_size
-        self.n_layers = n_layers
+        self.rnn_layers = rnn_layers
         self.dropout_probability = dropout_probability
 
         is_cuda = torch.cuda.is_available()
@@ -19,22 +89,121 @@ class HandWashNet(torch.nn.Module):
         #Layers
         self.rnn = torch.nn.RNN(input_size,
                                 hidden_size,
-                                n_layers,
+                                rnn_layers,
                                 nonlinearity='relu',
                                 dropout=dropout_probability)
         self.fc = torch.nn.Linear(hidden_size, 1)
+        self.sigmoid = torch.nn.Sigmoid()
 
-        def forward(self, x_batch):
-            batch_size = x_batch.size(0)
-            hidden = self.init_hidden(batch_size)
+    def init_hidden(self, batch_size):
+        hidden = torch.zeros(self.rnn_layers, batch_size, self.hidden_size).to(self.device)
+        return hidden
 
-            out, hidden = self.rnn(x_batch, hidden)
+    def forward(self, x_batch):
+        batch_size = x_batch.size(0)
+        hidden = self.init_hidden(batch_size)
 
-            out = out.contiguous().view(-1, self.hidden_dim)
-            out = self.fc(out)
+        out, hidden = self.rnn(x_batch, hidden)
 
-            return out, hidden
+        out = out.contiguous().view(-1, self.hidden_size)
+        out = self.fc(out)
+        out = self.sigmoid(out)
 
-        def init_hidden(self, batch_size):
-            hidden = torch.zeros(self.n_layers, batch_size, self.hidden_dim).to(self.device)
-            return hidden
+        return out, hidden
+
+
+def train_loop(dataloader, model, loss_fn, optimizer):
+    print("Entering training loop...")
+    print(model)
+    size = len(dataloader.dataset)
+    for batch, (X, y) in enumerate(dataloader):
+        #print(X)
+        #print(X.shape)
+        # Compute prediction and loss
+        pred = model(X)
+        loss = loss_fn(pred, y)
+
+        # Backpropagation
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+
+        if batch % 5 == 0:
+            loss, current = loss.item(), batch * len(X)
+            print(f"loss: {loss:>7f}  [{current:>5d}/{size:>5d}]")
+
+
+def test_loop(dataloader, model, loss_fn):
+    print("Entering testing loop...")
+    size = len(dataloader.dataset)
+    test_loss, correct = 0, 0
+
+    with torch.no_grad():
+        for X, y in dataloader:
+            pred = model(X)
+            test_loss += loss_fn(pred, y).item()
+            correct += (pred.argmax(1) == y).type(torch.float).sum().item()
+
+    test_loss /= size
+    correct /= size
+    print(f"Test Error: \n Accuracy: {(100*correct):>0.1f}%, Avg loss: {test_loss:>8f} \n")
+
+
+# under construction - list of global vars for now
+
+training_dataset = HandWashDataset("./test.json", "./test.json", 3)
+#print(training_dataset.data.shape)
+test_dataset = HandWashDataset("./test.json", "./test.json", 3)
+
+#training_data = HandWashDataset("./preprocessed_positives.json", "./preprocessed_positives.json", 3)
+#test_data = HandWashDataset("./preprocessed_positives.json", "./preprocessed_positives.json", 3)
+
+labels_map = {
+    0: "Not Handwashing",
+    1: "Handwashing",
+}
+
+batch_size = 2
+train_dataloader = DataLoader(training_dataset, batch_size=batch_size, shuffle=True)
+test_dataloader = DataLoader(test_dataset, batch_size=batch_size, shuffle=True)
+#print("loaded")
+#print(train_dataloader)
+
+#data, lbl = training_dataset.__getitem__(0)
+
+#train_features, train_labels = next(iter(train_dataloader))
+#print("Data: ")
+#print(train_features)
+#print("Label: ")
+#print(train_labels)
+#print(f"Feature batch shape: {train_features.size()}")
+#print(f"Labels batch shape: {train_labels.size()}")
+#video_seq = train_features[0]
+#print(video_seq)
+#label = train_labels[0]
+#print(f"Label: {label}")
+
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
+print('Using {} device'.format(device))
+model = HandWashNet().to(device)
+#print(model)
+
+print("Model structure: ", model, "\n\n")
+#for name, param in model.named_parameters():
+#    print(f"Layer: {name} | Size: {param.size()} | Values : {param[:2]} \n")
+
+# Hyperparameters
+learning_rate = 1e-3
+loss_fn = torch.nn.CrossEntropyLoss()
+optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate)
+epochs = 10
+
+train_loop(train_dataloader, model, loss_fn, optimizer)
+
+'''
+for t in range(epochs):
+    print(f"Epoch {t+1}\n-------------------------------")
+    train_loop(train_dataloader, model, loss_fn, optimizer)
+    test_loop(test_dataloader, model, loss_fn)
+torch.save(model.state_dict(), 'handwashnet_weights.pth')'''
+print("Done!")
