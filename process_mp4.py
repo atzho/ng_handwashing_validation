@@ -94,4 +94,4 @@ def get_file_list(path):
     return file_list
 
 if __name__ == "__main__":
-    process_mp4(get_file_list('data/HandWashDataset'), 'preprocessed_positives.json')
+    process_mp4(get_file_list('data/UCF101'), 'preprocessed_negatives.json')
