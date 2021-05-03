@@ -72,7 +72,7 @@ class HandWashDataset(Dataset):
 
 class HandWashNet(torch.nn.Module):
 
-    def __init__(self, input_size=32, hidden_size=10, rnn_layers=2, dropout_probability=0.2):
+    def __init__(self, input_size=3, hidden_size=10, rnn_layers=6, dropout_probability=0.2):
         #Initialization
         super(HandWashNet, self).__init__()
         self.input_size = input_size
@@ -96,12 +96,16 @@ class HandWashNet(torch.nn.Module):
         self.sigmoid = torch.nn.Sigmoid()
 
     def init_hidden(self, batch_size):
-        hidden = torch.zeros(self.rnn_layers, batch_size, self.hidden_size).to(self.device)
-        return hidden
+        #hidden = torch.zeros(self.rnn_layers, batch_size, self.hidden_size).to(self.device)
+        return torch.zeros(self.rnn_layers, batch_size, self.hidden_size).to(self.device)
 
-    def forward(self, x_batch):
-        batch_size = x_batch.size(0)
-        hidden = self.init_hidden(batch_size)
+    def forward(self, x_batch, hidden):
+        print("Entering forward")
+        #print(x_batch.shape)
+        #batch_size = x_batch.size(0)
+        #print("Batch size:")
+        #print(batch_size)
+        #print(hidden.shape)
 
         out, hidden = self.rnn(x_batch, hidden)
 
@@ -109,26 +113,34 @@ class HandWashNet(torch.nn.Module):
         out = self.fc(out)
         out = self.sigmoid(out)
 
+        print("Leaving forward")
         return out, hidden
 
+batch_size = 2
 
 def train_loop(dataloader, model, loss_fn, optimizer):
     print("Entering training loop...")
-    print(model)
+    #print(model)
     size = len(dataloader.dataset)
     for batch, (X, y) in enumerate(dataloader):
-        #print(X)
         #print(X.shape)
         # Compute prediction and loss
-        pred = model(X)
+        #hidden_state = model.init_hidden(batch_size)
+        hidden_state = model.init_hidden(batch_size)
+        for i in range(batch_size):
+            pred, hidden_state = model(X[i,:,:,:].float(), hidden_state)
+            #print("Prediction:")
+            #print(pred[0].shape)
+            #print(pred[1].shape)
         loss = loss_fn(pred, y)
 
         # Backpropagation
         optimizer.zero_grad()
         loss.backward()
+        #torch.nn.utils.clip_grad_norm_(model.parameters(), 1)
         optimizer.step()
 
-        if batch % 5 == 0:
+        if batch % 2 == 1:
             loss, current = loss.item(), batch * len(X)
             print(f"loss: {loss:>7f}  [{current:>5d}/{size:>5d}]")
 
@@ -163,7 +175,6 @@ labels_map = {
     1: "Handwashing",
 }
 
-batch_size = 2
 train_dataloader = DataLoader(training_dataset, batch_size=batch_size, shuffle=True)
 test_dataloader = DataLoader(test_dataset, batch_size=batch_size, shuffle=True)
 #print("loaded")
@@ -186,6 +197,7 @@ test_dataloader = DataLoader(test_dataset, batch_size=batch_size, shuffle=True)
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 print('Using {} device'.format(device))
 model = HandWashNet().to(device)
+model = model.float()
 #print(model)
 
 print("Model structure: ", model, "\n\n")
@@ -196,7 +208,7 @@ print("Model structure: ", model, "\n\n")
 learning_rate = 1e-3
 loss_fn = torch.nn.CrossEntropyLoss()
 optimizer = torch.optim.SGD(model.parameters(), lr=learning_rate)
-epochs = 10
+epochs = 5
 
 train_loop(train_dataloader, model, loss_fn, optimizer)
 
